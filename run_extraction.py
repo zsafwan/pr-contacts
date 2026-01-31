@@ -5,6 +5,7 @@ import argparse
 import sys
 from datetime import datetime
 
+from src import __version__
 from src.config import validate_config, DAYS_TO_FETCH, CATEGORIZATION_BATCH_SIZE
 from src.gmail_client import GmailClient
 from src.contact_extractor import ContactExtractor
@@ -16,6 +17,11 @@ from src.utils import progress_bar, clean_email
 def main():
     parser = argparse.ArgumentParser(
         description="Extract PR contacts from Gmail"
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"PR Contacts Extractor v{__version__}",
     )
     parser.add_argument(
         "--days",

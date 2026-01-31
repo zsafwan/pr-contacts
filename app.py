@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from datetime import datetime, timedelta
 
+from src import __version__
 from src.config import validate_config, DAYS_TO_FETCH
 from src.database import db, Contact, Category, Brand, EmailProcessed
 from src.gmail_client import GmailClient
@@ -40,6 +41,7 @@ def refresh_session():
 
 # Sidebar navigation
 st.sidebar.title("PR Contacts")
+st.sidebar.caption(f"v{__version__}")
 page = st.sidebar.radio(
     "Navigation",
     ["Dashboard", "Contacts", "Categories", "Brands", "Run Extraction"],

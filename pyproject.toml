@@ -1,0 +1,32 @@
+[project]
+name = "pr-contacts"
+version = "0.0.2"
+description = "Extract PR agency contacts from Gmail with AI-powered categorization"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+authors = [
+    {name = "Zamil Safwan"}
+]
+keywords = ["pr", "contacts", "gmail", "ai", "categorization"]
+
+dependencies = [
+    "google-api-python-client==2.111.0",
+    "google-auth-httplib2==0.2.0",
+    "google-auth-oauthlib==1.2.0",
+    "anthropic==0.18.1",
+    "sqlalchemy==2.0.25",
+    "streamlit==1.31.0",
+    "python-dotenv==1.0.0",
+    "pandas==2.2.0",
+]
+
+[project.scripts]
+pr-contacts = "run_extraction:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["src*"]

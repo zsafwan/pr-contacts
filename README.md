@@ -1,5 +1,8 @@
 # PR Contacts Extractor
 
+![Version](https://img.shields.io/badge/version-0.0.2-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11+-green.svg)
+
 A web application that reads Google Workspace emails, extracts PR agency contact information, dynamically categorizes contacts by PR type using AI, and provides a searchable database with web interface.
 
 ## Features
