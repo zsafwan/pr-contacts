@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from src import __version__
 from src.config import validate_config, DAYS_TO_FETCH
 from src.database import db, Contact, Category, Brand, EmailProcessed
-from src.gmail_client import GmailClient
+from src.mbox_client import MboxClient
 from src.contact_extractor import ContactExtractor
 from src.categorizer import Categorizer
 from src.utils import clean_email, format_phone, format_date
@@ -306,24 +306,40 @@ def show_brands():
 def show_extraction():
     st.title("Run Extraction")
 
-    # Check configuration
+    # Check for MBOX file
+    mbox_client = MboxClient()
+    mbox_file = mbox_client.find_mbox_file()
+
+    if mbox_file:
+        st.success(f"Found MBOX file: {mbox_file.name}")
+    else:
+        st.warning("No MBOX file found. Please extract your Google Takeout to the 'Takeout' folder.")
+        st.info("Download your emails from https://takeout.google.com/ and extract the archive to the project folder.")
+
+    # Check configuration for AI features
     errors = validate_config()
     if errors:
-        st.warning("Configuration issues detected:")
-        for error in errors:
-            st.write(f"- {error}")
-        st.info("Some features may not work. Check your .env file.")
+        # Filter out Gmail-related errors since we're using MBOX
+        errors = [e for e in errors if "credentials" not in e.lower()]
+        if errors:
+            st.warning("Configuration issues detected:")
+            for error in errors:
+                st.write(f"- {error}")
+            st.info("AI categorization requires ANTHROPIC_API_KEY in .env file.")
 
     # Options
     col1, col2 = st.columns(2)
 
     with col1:
-        days_back = st.number_input(
-            "Days to look back",
-            min_value=1,
-            max_value=365,
-            value=DAYS_TO_FETCH,
-        )
+        use_date_filter = st.checkbox("Filter by date", value=False)
+        days_back = None
+        if use_date_filter:
+            days_back = st.number_input(
+                "Days to look back",
+                min_value=1,
+                max_value=365,
+                value=DAYS_TO_FETCH,
+            )
 
     with col2:
         max_emails = st.number_input(
@@ -334,11 +350,12 @@ def show_extraction():
         )
 
     skip_categorization = st.checkbox(
-        "Skip AI categorization (faster, basic extraction only)"
+        "Skip AI categorization (faster, basic extraction only)",
+        value=True,
     )
 
     # Run button
-    if st.button("Start Extraction", type="primary"):
+    if st.button("Start Extraction", type="primary", disabled=not mbox_file):
         run_extraction_process(
             days_back=days_back,
             max_emails=max_emails if max_emails > 0 else None,
@@ -369,18 +386,21 @@ def run_extraction_process(days_back, max_emails, skip_categorization):
     status_text = st.empty()
 
     try:
-        # Authenticate
-        status_text.text("Authenticating with Gmail...")
-        gmail = GmailClient()
-        if not gmail.authenticate():
-            st.error("Failed to authenticate with Gmail. Please check credentials.")
+        # Open MBOX file
+        status_text.text("Opening MBOX file...")
+        mbox = MboxClient()
+        if not mbox.authenticate():
+            st.error("Failed to open MBOX file. Please check the Takeout folder.")
             return
 
         progress_bar.progress(10)
 
         # Fetch emails
-        status_text.text(f"Fetching emails from the last {days_back} days...")
-        emails = list(gmail.fetch_emails(days_back=days_back, max_results=max_emails))
+        if days_back:
+            status_text.text(f"Fetching emails from the last {days_back} days...")
+        else:
+            status_text.text("Fetching all emails...")
+        emails = list(mbox.fetch_emails(days_back=days_back, max_results=max_emails))
         st.write(f"Found {len(emails)} emails")
 
         if not emails:

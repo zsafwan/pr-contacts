@@ -7,6 +7,12 @@ token.json
 *.db
 database.db
 
+# Google Takeout (contains private emails)
+Takeout/
+takeout/
+takout/
+*.mbox
+
 # Python
 __pycache__/
 *.py[cod]

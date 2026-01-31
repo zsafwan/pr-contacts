@@ -7,7 +7,6 @@ from datetime import datetime
 
 from src import __version__
 from src.config import validate_config, DAYS_TO_FETCH, CATEGORIZATION_BATCH_SIZE
-from src.gmail_client import GmailClient
 from src.contact_extractor import ContactExtractor
 from src.categorizer import Categorizer
 from src.database import db
@@ -16,7 +15,7 @@ from src.utils import progress_bar, clean_email
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Extract PR contacts from Gmail"
+        description="Extract PR contacts from emails"
     )
     parser.add_argument(
         "--version",
@@ -24,10 +23,22 @@ def main():
         version=f"PR Contacts Extractor v{__version__}",
     )
     parser.add_argument(
+        "--source",
+        choices=["mbox", "gmail"],
+        default="mbox",
+        help="Email source: 'mbox' for Google Takeout files (default), 'gmail' for Gmail API",
+    )
+    parser.add_argument(
+        "--mbox-path",
+        type=str,
+        default=None,
+        help="Path to MBOX file (auto-detected if not specified)",
+    )
+    parser.add_argument(
         "--days",
         type=int,
-        default=DAYS_TO_FETCH,
-        help=f"Number of days to look back (default: {DAYS_TO_FETCH})",
+        default=None,
+        help=f"Number of days to look back (default: all for mbox, {DAYS_TO_FETCH} for gmail)",
     )
     parser.add_argument(
         "--max-emails",
@@ -62,27 +73,41 @@ def main():
     # Validate configuration
     print("Checking configuration...")
     errors = validate_config()
+
+    # Only require Anthropic API key if doing categorization
     if errors and not args.skip_categorization:
-        print("Configuration errors:")
-        for error in errors:
-            print(f"  - {error}")
-        if "ANTHROPIC_API_KEY" in str(errors):
-            print("\nYou can use --skip-categorization to run without AI features.")
-        sys.exit(1)
+        # Filter out Gmail credential errors if using mbox
+        if args.source == "mbox":
+            errors = [e for e in errors if "credentials" not in e.lower()]
+
+        if errors:
+            print("Configuration errors:")
+            for error in errors:
+                print(f"  - {error}")
+            if "ANTHROPIC_API_KEY" in str(errors):
+                print("\nYou can use --skip-categorization to run without AI features.")
+            sys.exit(1)
 
     # Initialize database
     print("Initializing database...")
     db.init_db()
 
-    # Authenticate with Gmail
-    print("Authenticating with Gmail...")
-    gmail = GmailClient()
-    if not gmail.authenticate():
-        print("Failed to authenticate with Gmail.")
+    # Initialize email client based on source
+    if args.source == "mbox":
+        from src.mbox_client import MboxClient
+        print("Using MBOX file (Google Takeout)...")
+        email_client = MboxClient(mbox_path=args.mbox_path)
+    else:
+        from src.gmail_client import GmailClient
+        print("Authenticating with Gmail API...")
+        email_client = GmailClient()
+
+    if not email_client.authenticate():
+        print(f"Failed to connect to email source.")
         sys.exit(1)
 
-    if not gmail.test_connection():
-        print("Gmail connection test failed.")
+    if not email_client.test_connection():
+        print("Email source connection test failed.")
         sys.exit(1)
 
     # Initialize other components
@@ -97,10 +122,15 @@ def main():
 
     # Set limits
     max_emails = 5 if args.test else args.max_emails
+    days_back = args.days if args.days else (DAYS_TO_FETCH if args.source == "gmail" else None)
 
     # Fetch emails
-    print(f"\nFetching emails from the last {args.days} days...")
-    emails = list(gmail.fetch_emails(days_back=args.days, max_results=max_emails))
+    if days_back:
+        print(f"\nFetching emails from the last {days_back} days...")
+    else:
+        print(f"\nFetching all emails...")
+
+    emails = list(email_client.fetch_emails(days_back=days_back, max_results=max_emails))
     print(f"Found {len(emails)} emails")
 
     if not emails:
@@ -139,10 +169,10 @@ def main():
             if (i + 1) % 10 == 0 or i == len(emails) - 1:
                 print(f"\r{progress_bar(i + 1, len(emails))}", end="", flush=True)
 
-            gmail_id = email_data.get("id")
+            email_id = email_data.get("id")
 
             # Skip if already processed
-            if db.is_email_processed(session, gmail_id):
+            if db.is_email_processed(session, email_id):
                 stats["skipped"] += 1
                 continue
 
@@ -150,7 +180,7 @@ def main():
             try:
                 contact_info = extractor.extract_from_email(email_data)
             except Exception as e:
-                print(f"\nError extracting contact from email {gmail_id}: {e}")
+                print(f"\nError extracting contact from email {email_id}: {e}")
                 stats["errors"] += 1
                 continue
 
@@ -182,7 +212,7 @@ def main():
             # Mark email as processed
             db.mark_email_processed(
                 session,
-                gmail_id=gmail_id,
+                gmail_id=email_id,
                 subject=email_data.get("subject", ""),
                 from_email=sender_email,
                 received_at=email_data.get("received_at"),
