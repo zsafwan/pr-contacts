@@ -60,6 +60,14 @@ class Contact(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # New fields for enhanced extraction
+    country = Column(Text)              # e.g., "United Arab Emirates"
+    country_code = Column(Text)         # e.g., "AE"
+    country_source = Column(Text)       # How detected: phone_code, tld, signature
+    email_domain = Column(Text, index=True)  # For grouping: "edelman.com"
+    company_source = Column(Text)       # How found: signature, website, ai
+    website = Column(Text)              # Company website URL
+
     # Relationships
     additional_emails = relationship("ContactEmail", back_populates="contact", cascade="all, delete-orphan")
     categories = relationship("Category", secondary=contact_categories, back_populates="contacts")
@@ -158,9 +166,19 @@ class Database:
         company: str = None,
         title: str = None,
         phone: str = None,
+        country: str = None,
+        country_code: str = None,
+        country_source: str = None,
+        email_domain: str = None,
+        company_source: str = None,
+        website: str = None,
     ) -> Contact:
         """Create a new contact or update existing one."""
         contact = session.query(Contact).filter(Contact.primary_email == email).first()
+
+        # Extract email domain if not provided
+        if not email_domain and "@" in email:
+            email_domain = email.split("@")[1].lower()
 
         if contact:
             # Update with new info if provided
@@ -168,10 +186,20 @@ class Database:
                 contact.name = name
             if company and not contact.company:
                 contact.company = company
+                if company_source:
+                    contact.company_source = company_source
             if title and not contact.title:
                 contact.title = title
             if phone and not contact.phone:
                 contact.phone = phone
+            if country and not contact.country:
+                contact.country = country
+                contact.country_code = country_code
+                contact.country_source = country_source
+            if email_domain and not contact.email_domain:
+                contact.email_domain = email_domain
+            if website and not contact.website:
+                contact.website = website
             contact.updated_at = datetime.utcnow()
         else:
             contact = Contact(
@@ -180,6 +208,12 @@ class Database:
                 company=company,
                 title=title,
                 phone=phone,
+                country=country,
+                country_code=country_code,
+                country_source=country_source,
+                email_domain=email_domain,
+                company_source=company_source,
+                website=website,
             )
             session.add(contact)
 
@@ -379,6 +413,38 @@ class Database:
             .group_by(Brand.name)
             .order_by(func.sum(contact_brands.c.mention_count).desc())
             .limit(limit)
+            .all()
+        )
+
+    def get_domain_stats(self, session: Session, exclude_personal: bool = True) -> list[tuple[str, int]]:
+        """Get contact counts per email domain for PR agency grouping."""
+        from sqlalchemy import func
+
+        personal_domains = [
+            "gmail.com", "yahoo.com", "hotmail.com", "outlook.com",
+            "aol.com", "icloud.com", "me.com", "mac.com", "live.com", "msn.com",
+        ]
+
+        query = (
+            session.query(Contact.email_domain, func.count(Contact.id))
+            .filter(Contact.email_domain.isnot(None))
+        )
+
+        if exclude_personal:
+            query = query.filter(~Contact.email_domain.in_(personal_domains))
+
+        return (
+            query.group_by(Contact.email_domain)
+            .order_by(func.count(Contact.id).desc())
+            .all()
+        )
+
+    def get_contacts_by_domain(self, session: Session, domain: str) -> list[Contact]:
+        """Get all contacts from a specific email domain."""
+        return (
+            session.query(Contact)
+            .filter(Contact.email_domain == domain)
+            .order_by(Contact.name)
             .all()
         )
 

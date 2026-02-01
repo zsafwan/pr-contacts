@@ -120,3 +120,32 @@ def progress_bar(current: int, total: int, width: int = 50) -> str:
     percent = int(progress * 100)
 
     return f"[{bar}] {percent}% ({current}/{total})"
+
+
+def get_second_level_domain(email: str) -> str:
+    """
+    Extract second-level domain from email address.
+
+    Handles subdomains and compound TLDs like .co.uk
+
+    Examples:
+        john@pr.edelman.com -> edelman.com
+        jane@company.co.uk -> company.co.uk
+        user@example.com -> example.com
+    """
+    if not email or "@" not in email:
+        return ""
+
+    domain = email.split("@")[1].lower()
+    parts = domain.split(".")
+
+    if len(parts) < 2:
+        return domain
+
+    # Handle compound TLDs (.co.uk, .com.au, .co.za, etc.)
+    compound_tlds = {"co", "com", "org", "net", "gov", "edu", "ac"}
+
+    if len(parts) >= 3 and parts[-2] in compound_tlds:
+        return ".".join(parts[-3:])
+
+    return ".".join(parts[-2:])

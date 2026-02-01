@@ -3,7 +3,9 @@
 import mailbox
 import base64
 import hashlib
+import random
 from datetime import datetime
+from email.header import decode_header
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Iterator
@@ -86,6 +88,7 @@ class MboxClient:
         days_back: int = None,
         max_results: int = None,
         query: str = None,
+        sample_size: int = None,
     ) -> Iterator[dict]:
         """
         Fetch emails from the MBOX file.
@@ -94,6 +97,7 @@ class MboxClient:
             days_back: Only return emails from the last N days (optional)
             max_results: Maximum number of emails to return (optional)
             query: Not implemented for MBOX (ignored)
+            sample_size: Return N random emails for testing (optional)
 
         Yields:
             Email message dictionaries with id, subject, from, date, body
@@ -106,10 +110,21 @@ class MboxClient:
         if days_back:
             cutoff_date = datetime.now().astimezone() - __import__('datetime').timedelta(days=days_back)
 
-        count = 0
         total = len(self.mbox)
 
+        # If sample_size is specified, pick random indices
+        if sample_size and sample_size < total:
+            indices_to_process = set(random.sample(range(total), sample_size))
+        else:
+            indices_to_process = None
+
+        count = 0
+
         for i, message in enumerate(self.mbox):
+            # Skip if not in sample set
+            if indices_to_process is not None and i not in indices_to_process:
+                continue
+
             if max_results and count >= max_results:
                 break
 
@@ -160,10 +175,10 @@ class MboxClient:
 
             return {
                 "id": unique_id,
-                "subject": message.get("Subject", "(No Subject)"),
-                "from_name": sender_name,
+                "subject": self._decode_header_value(message.get("Subject")) or "(No Subject)",
+                "from_name": self._decode_header_value(sender_name),
                 "from_email": sender_email,
-                "to": message.get("To", ""),
+                "to": self._decode_header_value(message.get("To", "")),
                 "date": date_str,
                 "received_at": received_at,
                 "body": body,
@@ -226,6 +241,21 @@ class MboxClient:
             return parsedate_to_datetime(date_str)
         except (TypeError, ValueError):
             return None
+
+    def _decode_header_value(self, value: str) -> str:
+        """Decode MIME-encoded header (e.g., =?UTF-8?B?...?=)."""
+        if not value:
+            return ""
+        try:
+            decoded_parts = []
+            for part, charset in decode_header(value):
+                if isinstance(part, bytes):
+                    decoded_parts.append(part.decode(charset or 'utf-8', errors='ignore'))
+                else:
+                    decoded_parts.append(part)
+            return ' '.join(decoded_parts)
+        except Exception:
+            return value
 
     def get_email_content(self, message_id: str) -> dict | None:
         """

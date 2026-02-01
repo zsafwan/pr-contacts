@@ -67,6 +67,17 @@ def main():
         action="store_true",
         help="Test mode: process only 5 emails",
     )
+    parser.add_argument(
+        "--sample-size",
+        type=int,
+        default=None,
+        help="Process N random emails for quick testing (e.g., --sample-size 50)",
+    )
+    parser.add_argument(
+        "--fetch-websites",
+        action="store_true",
+        help="Fetch company names from websites when not found in signature (slower)",
+    )
 
     args = parser.parse_args()
 
@@ -113,6 +124,8 @@ def main():
     # Initialize other components
     extractor = ContactExtractor()
     categorizer = None
+    website_fetcher = None
+
     if not args.skip_categorization:
         try:
             categorizer = Categorizer()
@@ -120,17 +133,30 @@ def main():
             print(f"Warning: {e}")
             print("Continuing without categorization.")
 
+    # Initialize website fetcher if flag is set
+    if args.fetch_websites:
+        from src.website_fetcher import WebsiteFetcher
+        website_fetcher = WebsiteFetcher()
+        print("Website fetching enabled (this may slow down processing)")
+
+    # Initialize company resolver (always active for known domains + domain formatting)
+    from src.company_resolver import CompanyResolver
+    company_resolver = CompanyResolver(website_fetcher=website_fetcher)
+
     # Set limits
     max_emails = 5 if args.test else args.max_emails
     days_back = args.days if args.days else (DAYS_TO_FETCH if args.source == "gmail" else None)
+    sample_size = args.sample_size
 
     # Fetch emails
-    if days_back:
+    if sample_size:
+        print(f"\nFetching {sample_size} random emails for testing...")
+    elif days_back:
         print(f"\nFetching emails from the last {days_back} days...")
     else:
         print(f"\nFetching all emails...")
 
-    emails = list(email_client.fetch_emails(days_back=days_back, max_results=max_emails))
+    emails = list(email_client.fetch_emails(days_back=days_back, max_results=max_emails, sample_size=sample_size))
     print(f"Found {len(emails)} emails")
 
     if not emails:
@@ -190,14 +216,36 @@ def main():
                 stats["skipped"] += 1
                 continue
 
+            # Resolve company name using multiple strategies
+            company = contact_info.company
+            company_source = contact_info.company_source
+
+            # If no company from signature, use company resolver
+            if not company:
+                resolved_company, resolved_source = company_resolver.resolve(
+                    sender_email,
+                    try_website=args.fetch_websites
+                )
+                if resolved_company:
+                    company = resolved_company
+                    company_source = resolved_source
+
+            # Generate website URL from email domain
+            website = company_resolver.get_website_url(sender_email)
+
             # Create or update contact
             contact = db.create_or_update_contact(
                 session,
                 email=sender_email,
                 name=contact_info.name,
-                company=contact_info.company,
+                company=company,
                 title=contact_info.title,
                 phone=contact_info.phone,
+                country=contact_info.country,
+                country_code=contact_info.country_code,
+                country_source=contact_info.country_source,
+                company_source=company_source,
+                website=website,
             )
 
             # Add additional emails
